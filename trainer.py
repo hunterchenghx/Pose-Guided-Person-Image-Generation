@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import os, pdb
 import StringIO
+import cv2
 import scipy.misc
 import numpy as np
 import glob
@@ -10,7 +11,6 @@ from itertools import chain
 from collections import deque
 import pickle, shutil
 from tqdm import tqdm
-
 from tensorflow.python.ops import control_flow_ops
 
 from models import *
@@ -125,16 +125,16 @@ class PG2(object):
 
         if config.test_one_by_one:
             self.x = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 3))
-            self.x_target = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 3))
-            self.pose = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 18))
+            #self.x_target = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 3))
+            #self.pose = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 18))
             self.pose_target = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 18))
-            self.mask = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 1))
-            self.mask_target = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 1))
+            #self.mask = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 1))
+            #self.mask_target = tf.placeholder(tf.float32, shape=(None, self.img_H, self.img_W, 1))
         else:
             self.x, self.x_target, self.pose, self.pose_target, self.mask, self.mask_target = self._load_batch_pair_pose(self.dataset_obj)
 
     def init_net(self):
-        self.build_model()
+        self.build_test_model()
 
         if self.pretrained_path is not None:
             var = tf.get_collection(tf.GraphKeys.VARIABLES, scope='Pose_AE')+tf.get_collection(tf.GraphKeys.VARIABLES, scope='UAEnoFC')
@@ -221,19 +221,19 @@ class PG2(object):
             return wgan_gp.DCGANDiscriminator
         raise Exception('You must choose an architecture!')
 
-    # def build_test_model(self):
-    #     G1, DiffMap, self.G_var1, self.G_var2  = GeneratorCNN_Pose_UAEAfterResidual_UAEnoFCAfter2Noise(
-    #             self.x, self.pose_target, 
-    #             self.channel, self.z_num, self.repeat_num, self.conv_hidden_num, self.data_format, activation_fn=tf.nn.relu, noise_dim=0, reuse=False)
+    def build_test_model(self):
+        G1, DiffMap, self.G_var1, self.G_var2  = GeneratorCNN_Pose_UAEAfterResidual_UAEnoFCAfter2Noise(
+                self.x, self.pose_target, 
+                self.channel, self.z_num, self.repeat_num, self.conv_hidden_num, self.data_format, activation_fn=tf.nn.relu, noise_dim=0, reuse=False)
 
-    #     G2 = G1 + DiffMap
-    #     self.G1 = denorm_img(G1, self.data_format)
-    #     self.G2 = denorm_img(G2, self.data_format)
-    #     self.G = self.G2
-    #     self.DiffMap = denorm_img(DiffMap, self.data_format)
+        G2 = G1 + DiffMap
+        self.G1 = denorm_img(G1, self.data_format)
+        self.G2 = denorm_img(G2, self.data_format)
+        self.G = self.G2
+        self.DiffMap = denorm_img(DiffMap, self.data_format)
 
-    #     self.wgan_gp = WGAN_GP(DATA_DIR='', MODE='dcgan', DIM=64, BATCH_SIZE=self.batch_size, ITERS=200000, LAMBDA=10, G_OUTPUT_DIM=128*64*3)
-    #     Dis = self._getDiscriminator(self.wgan_gp, arch=self.D_arch)
+        self.wgan_gp = WGAN_GP(DATA_DIR='', MODE='dcgan', DIM=64, BATCH_SIZE=self.batch_size, ITERS=200000, LAMBDA=10, G_OUTPUT_DIM=128*64*3)
+        Dis = self._getDiscriminator(self.wgan_gp, arch=self.D_arch)
 
     def build_model(self):
         G1, DiffMap, self.G_var1, self.G_var2  = GeneratorCNN_Pose_UAEAfterResidual_UAEnoFCAfter2Noise(
@@ -380,7 +380,10 @@ class PG2(object):
         for i in xrange(400):
             x_fixed, x_target_fixed, pose_fixed, pose_target_fixed, mask_fixed, mask_target_fixed = self.get_image_from_loader()
             x = utils_wgan.process_image(x_fixed, 127.5, 127.5)
+            
             x_target = utils_wgan.process_image(x_target_fixed, 127.5, 127.5)
+            #pdb.set_trace()
+            #np.save('ptf.npy', pose_target_fixed[18,:])
             if 0==i:
                 x_fake = self.generate(x, x_target, pose_target_fixed, test_result_dir, idx=self.start_step, save=True)
             else:
@@ -426,6 +429,28 @@ class PG2(object):
             path = os.path.join(root_path, '{}_G_ssim{}.png'.format(idx,ssim_G_x_mean))
             save_image(G, path)
             print("[*] Samples saved: {}".format(path))
+        return G
+
+    def generate_hunter(self, x_input, pose_input, path=None, save=True):
+        #x_input_ = cv2.resize(x_input, (64, 128))
+        x_input_ = cv2.resize(x_input, (256, 256))
+        x_input_ = np.expand_dims(x_input_, axis=0)
+        #pdb.set_trace()
+        #pose_input_ = np.transpose(pose_input, axes=(1, 2, 0))
+        #pose_input_ = cv2.resize(pose_input_, (64, 128))
+        #p_save = pose_input_.sum(axis=2)
+        #p_save = Image.fromarray(p_save.astype(np.uint8))
+        #p_save.save('hhh.png')
+        pose_target_fixed = np.expand_dims(pose_input, axis=0)
+        x_fixed = utils_wgan.process_image(x_input_, 127.5, 127.5)
+        G = self.sess.run(self.G, {self.x: x_fixed, self.pose_target: pose_target_fixed})
+        #pdb.set_trace()
+        if path is None and save:
+            current_path = '/media/cheng/marvel/Pose-Guided-Person-Image-Generation/test/'
+            path = os.path.join(current_path, 'test.png')
+            im = Image.fromarray(G[0,:].astype(np.uint8))
+            im.save(path)
+            print("fake image generated.")
         return G
 
     def _load_batch_pair_pose(self, dataset):
