@@ -86,6 +86,18 @@ class PG2_256(PG2):
             tf.summary.scalar("misc/d_lr", self.d_lr),
             tf.summary.scalar("misc/g_lr", self.g_lr),
         ])
+    
+    def build_test_model(self):
+        G1, DiffMap, self.G_var1, self.G_var2  = GeneratorCNN_Pose_UAEAfterResidual_UAEnoFCAfterNoise_256(
+					self.x, self.pose_target,
+					self.channel, self.z_num, self.repeat_num, self.conv_hidden_num, self.data_format, activation_fn=tf.nn.relu, noise_dim=0, reuse=False)
+        G2 = G1 + DiffMap
+        self.G1 = denorm_img(G1, self.data_format)
+        self.G2 = denorm_img(G2, self.data_format)
+        self.G = self.G2
+        self.DiffMap = denorm_img(DiffMap, self.data_format)
+        self.wgan_gp= WGAN_GP(DATA_DIR='', MODE='dcgan', DIM=64, BATCH_SIZE=self.batch_size, ITERS=200000, LAMBDA=10, G_OUTPUT_DIM=256*256*3)
+        Dis = self._getDiscriminator(self.wgan_gp, arch=self.D_arch)
 
     def _load_batch_pair_pose(self, dataset, mode='coordSolid'):
         data_provider = slim.dataset_data_provider.DatasetDataProvider(dataset, common_queue_capacity=32, common_queue_min=8)
